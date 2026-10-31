@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tất cả danh mục</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 20px; background: #f3f6fa; color: #182638; font: 16px/1.5 system-ui, sans-serif; }
+    main { max-width: 1100px; margin: auto; }
+    a { color: #2459ce; }
+    section { background: white; border: 1px solid #dce3ed; border-radius: 12px; padding: 24px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e5eaf1; }
+    th { background: #f5f7fb; }
+    .amount { text-align: right; white-space: nowrap; }
+    #status { color: #526176; }
+    button, input { font: inherit; padding: 8px 10px; border: 1px solid #bcc8d7; border-radius: 6px; }
+    button { background: #2459ce; color: white; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    input { width: 160px; }
+    .actions { display: flex; gap: 8px; }
+    .delete-button { background: #bc3232; }
+    form { display: grid; gap: 10px; max-width: 560px; margin-top: 24px; padding: 24px; background: white; border: 1px solid #dce3ed; border-radius: 12px; }
+    form input, form select { width: 100%; }
+    select { font: inherit; padding: 8px 10px; border: 1px solid #bcc8d7; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <main>
+    <a href="/">← Về trang chủ</a>
+    <h1>Tất cả danh mục</h1>
+    <section aria-label="Danh sách danh mục">
+      <p id="status" role="status">Đang tải…</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">ID</th><th scope="col">Tên danh mục</th><th scope="col" class="amount">Hạn mức</th><th scope="col">Trạng thái</th><th scope="col">Thao tác</th></tr></thead>
+          <tbody id="categories-body"></tbody>
+        </table>
+      </div>
+    </section>
+    <form id="add-category-form" action="/api/categories" method="POST">
+      <h2>Thêm danh mục</h2>
+      <label for="new-category-name">Tên danh mục</label>
+      <input id="new-category-name" name="name" type="text" required>
+
+      <label for="new-category-limit">Hạn mức</label>
+      <input id="new-category-limit" name="limit_amount" type="number" step="any" required>
+
+      <input name="change_current_categories" type="hidden" value="1">
+      <button type="submit">THÊM danh mục</button>
+    </form>
+  </main>
+  <script>
+    document.getElementById("add-category-form").addEventListener("submit", (event) => {
+      if (!window.confirm("Bạn chắc chắn muốn thêm danh mục này? Thay đổi này sẽ CÓ ảnh hưởng tới danh mục tháng hiện tại.")) {
+        event.preventDefault();
+      }
+    });
+
+    async function loadCategories() {
+      const status = document.getElementById("status");
+      const amountFormat = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 });
+      try {
+        const response = await fetch("/api/categories");
+        if (!response.ok) throw new Error("Không thể tải danh mục. Vui lòng tải lại trang.");
+        const categories = await response.json();
+        if (!Array.isArray(categories)) throw new Error("Dữ liệu danh mục không hợp lệ.");
+        const tbody = document.getElementById("categories-body");
+        for (const category of categories) {
+          const row = document.createElement("tr");
+          const values = [category.category_id, category.name ?? "—",
+            category.limit_amount == null ? "—" : amountFormat.format(category.limit_amount),
+            category.is_deleted ? "Đã xóa" : "Đang sử dụng"];
+          values.forEach((value, index) => {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            if (index === 2) cell.className = "amount";
+            row.appendChild(cell);
+          });
+          const limitCell = row.children[2];
+          const actions = document.createElement("td");
+          const controls = document.createElement("div");
+          controls.className = "actions";
+          const edit = document.createElement("button");
+          edit.type = "button";
+          edit.textContent = "Edit";
+          const save = document.createElement("button");
+          save.type = "button";
+          save.textContent = "Save";
+          save.hidden = true;
+          const cancel = document.createElement("button");
+          cancel.type = "button";
+          cancel.textContent = "Hủy";
+          cancel.hidden = true;
+          const deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "delete-button";
+          deleteButton.textContent = "Xóa";
+          const input = document.createElement("input");
+          input.type = "number";
+          input.step = "any";
+          input.required = true;
+          input.setAttribute("aria-label", `Hạn mức của ${category.name ?? category.category_id}`);
+
+          function finishEditing() {
+            limitCell.textContent = category.limit_amount == null ? "—" : amountFormat.format(category.limit_amount);
+            edit.hidden = false;
+            save.hidden = true;
+            cancel.hidden = true;
+          }
+
+          edit.addEventListener("click", () => {
+            input.value = category.limit_amount ?? "";
+            limitCell.replaceChildren(input);
+            edit.hidden = true;
+            save.hidden = false;
+            cancel.hidden = false;
+            input.focus();
+          });
+          cancel.addEventListener("click", finishEditing);
+          save.addEventListener("click", async () => {
+            if (!input.reportValidity()) return;
+            save.disabled = true;
+            cancel.disabled = true;
+            deleteButton.disabled = true;
+            input.disabled = true;
+            try {
+              const response = await fetch("/api/categories", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: category.category_id, limit_amount: Number(input.value) }),
+              });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || "Không thể cập nhật hạn mức.");
+              category.limit_amount = result.limit_amount;
+              finishEditing();
+              status.textContent = `Đã cập nhật hạn mức danh mục ${category.name ?? category.category_id}.`;
+            } catch (error) {
+              window.alert(error.message);
+            } finally {
+              save.disabled = false;
+              cancel.disabled = false;
+              deleteButton.disabled = false;
+              input.disabled = false;
+            }
+          });
+          deleteButton.addEventListener("click", async () => {
+            const confirmed = window.confirm(
+              `Bạn có chắc muốn xóa danh mục "${category.name ?? category.category_id}"? Các giao dịch trong quá khứ thuộc danh mục này sẽ được giữ lại nhưng không còn thuộc danh mục nào.`
+            );
+            if (!confirmed) return;
+
+            deleteButton.disabled = true;
+            edit.disabled = true;
+            save.disabled = true;
+            cancel.disabled = true;
+            input.disabled = true;
+            try {
+              const response = await fetch("/api/categories", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: category.category_id }),
+              });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || "Không thể xóa danh mục.");
+              row.remove();
+              status.textContent = tbody.children.length
+                ? `Đã xóa danh mục. Còn ${tbody.children.length} danh mục.`
+                : "Chưa có danh mục nào.";
+            } catch (error) {
+              window.alert(error.message);
+            } finally {
+              deleteButton.disabled = false;
+              edit.disabled = false;
+              save.disabled = false;
+              cancel.disabled = false;
+              input.disabled = false;
+            }
+          });
+          controls.append(edit, save, cancel, deleteButton);
+          actions.appendChild(controls);
+          row.appendChild(actions);
+          tbody.appendChild(row);
+        }
+        status.textContent = categories.length ? `${categories.length} danh mục` : "Chưa có danh mục nào.";
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }
+    loadCategories();
+  </script>
+</body>
+</html>

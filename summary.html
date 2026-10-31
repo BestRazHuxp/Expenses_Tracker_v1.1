@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tổng hợp thu chi</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 20px; background: #f3f6fa; color: #182638; font: 16px/1.5 system-ui, sans-serif; }
+    main { max-width: 1100px; margin: auto; }
+    a { color: #2459ce; }
+    h1 { margin-bottom: 8px; }
+    h2 { font-size: 21px; }
+    .muted { color: #526176; }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 24px 0; }
+    .card, section { background: white; border: 1px solid #dce3ed; border-radius: 12px; padding: 20px; }
+    .card span { display: block; color: #526176; font-size: 14px; }
+    .card strong { display: block; font-size: 24px; margin-top: 8px; overflow-wrap: anywhere; }
+    .income { color: #087b59; }
+    .expense { color: #bc3232; }
+    section { margin-bottom: 24px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e5eaf1; }
+    th { background: #f5f7fb; }
+    td { overflow-wrap: anywhere; }
+    .number { text-align: right; white-space: nowrap; }
+    progress { display: block; width: 110px; height: 8px; accent-color: #2459ce; }
+    .calendar-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+    select { padding: 9px 12px; border: 1px solid #bcc8d7; border-radius: 6px; font: inherit; background: white; }
+    .calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); min-width: 780px; gap: 1px; background: #dce3ed; border: 1px solid #dce3ed; }
+    .weekday { text-align: center; background: #edf2fa; padding: 12px 4px; font-weight: 600; font-size: 14px; }
+    .calendar-day { min-height: 130px; background: white; padding: 12px 8px; overflow-wrap: anywhere; }
+    .calendar-day.empty { background: #f5f7fb; }
+    .day-number { display: block; margin-bottom: 12px; font-size: 14px; }
+    .day-total { display: block; font-size: 14px; }
+    .calendar-day details { margin-top: 8px; font-size: 12px; }
+    .calendar-day summary { cursor: pointer; color: #526176; }
+    .calendar-day ul { padding-left: 16px; }
+    [hidden] { display: none; }
+    @media (max-width: 800px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 440px) { .cards { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <a href="/">← Về trang chủ</a>
+    <h1 id="title">Tổng hợp thu chi</h1>
+    <p id="status" class="muted" role="status">Đang tải dữ liệu…</p>
+    <div id="report" hidden>
+      <div class="cards">
+        <div class="card"><span>Tổng thu</span><strong id="income" class="income"></strong></div>
+        <div class="card"><span>Tổng chi</span><strong id="expense" class="expense"></strong></div>
+        <div class="card"><span>Tiền tiết kiệm</span><strong id="savings"></strong></div>
+        <div class="card"><span>Tỷ lệ tiết kiệm</span><strong id="savings-rate"></strong></div>
+      </div>
+      <p class="muted">Tỷ lệ tiết kiệm = (Tổng thu − Tổng chi) / Tổng thu × 100%. Không tính khi tổng thu bằng 0.</p>
+      <section>
+        <h2>Hạn mức theo danh mục</h2>
+        <p class="muted">Mức sử dụng = Tổng chi / Hạn mức × 100%. Trên 100% là vượt hạn mức.</p>
+        <p id="category-empty" hidden>Không có danh mục thuộc tháng này.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">Danh mục</th><th scope="col" class="number">Hạn mức</th><th scope="col" class="number">Thu</th><th scope="col" class="number">Chi</th><th scope="col" class="number">Còn lại</th><th scope="col">Mức sử dụng</th></tr></thead>
+            <tbody id="category-body"></tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h2>Lịch thu chi</h2>
+        <p class="muted">Ngày giao dịch được tính theo giờ Việt Nam.</p>
+        <div class="calendar-controls">
+          <label for="calendar-type">Hiển thị</label>
+          <select id="calendar-type">
+            <option value="-1">Chi tiêu</option>
+            <option value="1">Thu nhập</option>
+          </select>
+        </div>
+        <div class="table-wrap"><div id="days" class="calendar" aria-label="Lịch thu chi tháng" aria-live="polite"></div></div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const money = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" });
+    const number = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 });
+    const formatMoney = value => value == null ? "—" : money.format(value);
+    const formatRate = value => value == null ? "Không áp dụng" : `${number.format(value)}%`;
+    function cell(row, value, className = "") {
+      const td = document.createElement("td");
+      td.textContent = value;
+      td.className = className;
+      row.appendChild(td);
+      return td;
+    }
+
+    function renderCalendar(data, coefficient) {
+      const calendar = document.getElementById("days");
+      calendar.replaceChildren();
+      for (const label of ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ nhật"]) {
+        const heading = document.createElement("div");
+        heading.className = "weekday";
+        heading.textContent = label;
+        calendar.appendChild(heading);
+      }
+
+      // setUTCFullYear also handles years 1-99 without treating them as 1901-1999.
+      const first = new Date(0);
+      first.setUTCFullYear(data.year, data.month - 1, 1);
+      const last = new Date(first);
+      last.setUTCMonth(last.getUTCMonth() + 1, 0);
+      const offset = (first.getUTCDay() + 6) % 7;
+      const dayCount = last.getUTCDate();
+      const slots = Math.ceil((offset + dayCount) / 7) * 7;
+      const byDate = new Map(data.days.map(day => [day.date, day]));
+
+      for (let slot = 0; slot < slots; slot++) {
+        const dayNumber = slot - offset + 1;
+        const box = document.createElement("div");
+        box.className = "calendar-day";
+        if (dayNumber < 1 || dayNumber > dayCount) {
+          box.classList.add("empty");
+          box.setAttribute("aria-hidden", "true");
+          calendar.appendChild(box);
+          continue;
+        }
+
+        const date = `${String(data.year).padStart(4, "0")}-${String(data.month).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
+        const transactions = (byDate.get(date)?.transactions || []).filter(transaction => transaction.coefficient === coefficient);
+        const label = document.createElement("strong");
+        label.className = "day-number";
+        label.textContent = dayNumber;
+        box.setAttribute("aria-label", date);
+        const total = document.createElement("span");
+        total.className = transactions.length ? `day-total ${coefficient === 1 ? "income" : "expense"}` : "day-total muted";
+        total.textContent = transactions.length
+          ? formatMoney(transactions.reduce((sum, transaction) => sum + transaction.amount, 0))
+          : formatMoney(0);
+        box.append(label, total);
+
+        if (transactions.length) {
+          const details = document.createElement("details");
+          const summary = document.createElement("summary");
+          summary.textContent = `${transactions.length} giao dịch`;
+          const list = document.createElement("ul");
+          for (const transaction of transactions) {
+            const item = document.createElement("li");
+            const categoryName = transaction.category_id == null ? "Chưa phân loại" : (transaction.category_name ?? "—");
+            item.textContent = `${categoryName}: ${formatMoney(transaction.amount)}${transaction.note ? ` · ${transaction.note}` : ""}`;
+            list.appendChild(item);
+          }
+          details.append(summary, list);
+          box.appendChild(details);
+        }
+        calendar.appendChild(box);
+      }
+    }
+
+    async function loadSummary() {
+      const status = document.getElementById("status");
+      try {
+        const response = await fetch(window.location.pathname + window.location.search, {
+          headers: { Accept: "application/json" },
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Không thể tải tổng hợp thu chi.");
+        document.getElementById("title").textContent = `Tổng hợp thu chi · Tháng ${data.month}/${data.year}`;
+        document.getElementById("income").textContent = formatMoney(data.total_income);
+        document.getElementById("expense").textContent = formatMoney(data.total_expense);
+        document.getElementById("savings").textContent = formatMoney(data.savings);
+        document.getElementById("savings").className = data.savings < 0 ? "expense" : "income";
+        document.getElementById("savings-rate").textContent = formatRate(data.savings_rate);
+
+        const categoryBody = document.getElementById("category-body");
+        document.getElementById("category-empty").hidden = data.categories.length > 0;
+        for (const category of data.categories) {
+          const row = document.createElement("tr");
+          cell(row, category.name ?? "—");
+          cell(row, formatMoney(category.limit_amount), "number");
+          cell(row, formatMoney(category.total_income), "number income");
+          cell(row, formatMoney(category.total_expense), "number expense");
+          cell(row, formatMoney(category.remaining_amount), category.remaining_amount < 0 ? "number expense" : "number");
+          const usage = cell(row, formatRate(category.budget_usage_rate));
+          if (category.budget_usage_rate != null) {
+            const progress = document.createElement("progress");
+            progress.max = 100;
+            progress.value = Math.max(0, Math.min(category.budget_usage_rate, 100));
+            progress.setAttribute("aria-label", `Mức sử dụng hạn mức ${category.name ?? ""}: ${formatRate(category.budget_usage_rate)}`);
+            usage.appendChild(progress);
+            if (category.budget_usage_rate > 100) usage.className = "expense";
+          }
+          categoryBody.appendChild(row);
+        }
+
+        const calendarType = document.getElementById("calendar-type");
+        renderCalendar(data, Number(calendarType.value));
+        calendarType.addEventListener("change", () => renderCalendar(data, Number(calendarType.value)));
+        status.textContent = "";
+        document.getElementById("report").hidden = false;
+      } catch (error) {
+        status.textContent = `Không thể hiển thị báo cáo: ${error.message}. Vui lòng tải lại trang.`;
+      }
+    }
+    loadSummary();
+  </script>
+</body>
+</html>

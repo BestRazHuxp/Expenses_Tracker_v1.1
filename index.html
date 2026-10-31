@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Thêm danh mục</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 20px; background: #f3f6fa; color: #182638; font: 16px/1.5 system-ui, sans-serif; }
+    main { max-width: 1100px; margin: auto; }
+    h1 { margin-top: 0; }
+    h2 { margin-top: 0; font-size: 20px; }
+    .lists { display: grid; grid-template-columns: 1fr; gap: 20px; margin-bottom: 24px; }
+    section, form { background: white; border: 1px solid #dce3ed; border-radius: 12px; padding: 24px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 12px 8px; text-align: left; border-bottom: 1px solid #e5eaf1; }
+    th { background: #f5f7fb; }
+    .amount { text-align: right; white-space: nowrap; }
+    .status { color: #526176; }
+    form { display: grid; gap: 10px; max-width: 560px; }
+    form + form { margin-top: 24px; }
+    input, select, button { font: inherit; padding: 10px 12px; border: 1px solid #bcc8d7; border-radius: 6px; }
+    button { background: #2459ce; color: white; border: 0; cursor: pointer; margin-top: 10px; }
+    @media (max-width: 760px) { .lists { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+  <h1>Quản lý danh mục</h1>
+  <p><button type="button" onclick="window.location.href='/edit_transactions.html'">Chỉnh sửa giao dịch</button></p>
+  <p><button type="button" onclick="window.location.href='/edit_categories.html'">Chỉnh sửa Danh Mục</button></p>
+  <div class="lists">
+    <section aria-labelledby="current-categories-title">
+      <h2 id="current-categories-title">Danh mục tháng hiện tại</h2>
+      <p id="current-categories-status" class="status" role="status">Đang tải…</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">ID</th><th scope="col">Tên danh mục</th><th scope="col" class="amount">Hạn mức</th><th scope="col">Trạng thái</th></tr></thead>
+          <tbody id="current-categories-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+  <form id="transaction-form" action="/api/transactions" method="POST">
+    <h2>Thêm giao dịch</h2>
+    <label for="transaction-amount">Số tiền</label>
+    <input id="transaction-amount" name="amount" type="number" step="any" required>
+
+    <label for="transaction-category">Danh mục</label>
+    <select id="transaction-category" name="category_id" required disabled>
+      
+    </select>
+    <p id="transaction-category-status" class="status" role="status"></p>
+
+    <label for="transaction-date">Ngày (có thể để trống)</label>
+    <input id="transaction-date" name="date" type="date">
+
+    <label for="transaction-coefficient">Loại giao dịch</label>
+    <select id="transaction-coefficient" name="coefficient">
+      <option value="-1">Chi Tiêu</option>
+      <option value="1">Thu Nhập</option>
+    </select>
+
+    <label for="transaction-note">Ghi chú (không bắt buộc)</label>
+    <input id="transaction-note" name="note" type="text">
+    <button id="transaction-submit" type="submit" disabled>Thêm giao dịch</button>
+  </form>
+  <form id="summary-form" action="/api/summary" method="GET">
+    <h2>Tổng hợp thu chi</h2>
+    <label for="summary-month">Tháng</label>
+    <input id="summary-month" name="month" type="number" min="1" max="12" step="1" required>
+
+    <label for="summary-year">Năm</label>
+    <input id="summary-year" name="year" type="number" min="1" max="9999" step="1" required>
+
+    <button type="submit">Xem tổng hợp</button>
+  </form>
+  </main>
+  <script>
+    const summaryDateParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "numeric",
+    }).formatToParts(new Date());
+    document.getElementById("summary-month").value = summaryDateParts.find((part) => part.type === "month").value;
+    document.getElementById("summary-year").value = summaryDateParts.find((part) => part.type === "year").value;
+
+    const amountFormat = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 });
+
+    async function loadCategories(url, bodyId, statusId) {
+      const tbody = document.getElementById(bodyId);
+      const status = document.getElementById(statusId);
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Không thể tải danh mục. Vui lòng tải lại trang.");
+        let categories = await response.json();
+        if (!Array.isArray(categories)) throw new Error("Dữ liệu danh mục không hợp lệ.");
+
+        if (bodyId === "current-categories-body") {
+          const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "Asia/Ho_Chi_Minh",
+            year: "numeric",
+            month: "2-digit",
+          }).formatToParts(new Date());
+          const year = parts.find((part) => part.type === "year").value;
+          const month = parts.find((part) => part.type === "month").value;
+          const currentMonth = `${year}-${month}`;
+          categories = categories.filter((category) =>
+            typeof category.date === "string" && category.date.slice(0, 7) === currentMonth
+          );
+
+          const select = document.getElementById("transaction-category");
+          select.replaceChildren(new Option("Chưa phân loại", "null"));
+          for (const category of categories) {
+            select.add(new Option(category.name ?? "—", category.category_id));
+          }
+          select.disabled = false;
+          document.getElementById("transaction-submit").disabled = false;
+          document.getElementById("transaction-category-status").textContent = categories.length
+            ? "" : "Chưa có danh mục tháng này. Bạn vẫn có thể chọn Chưa phân loại.";
+        }
+
+        for (const category of categories) {
+          const row = document.createElement("tr");
+          const values = [
+            category.category_id,
+            category.name ?? "—",
+            category.limit_amount == null ? "—" : amountFormat.format(category.limit_amount),
+            category.is_deleted ? "Đã xóa" : "Đang sử dụng",
+          ];
+          values.forEach((value, index) => {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            if (index === 2) cell.className = "amount";
+            row.appendChild(cell);
+          });
+          tbody.appendChild(row);
+        }
+        status.textContent = categories.length ? `${categories.length} danh mục` : "Chưa có danh mục nào.";
+      } catch (error) {
+        status.textContent = error.message;
+        if (bodyId === "current-categories-body") {
+          document.getElementById("transaction-category").replaceChildren(new Option("Không tải được danh mục", ""));
+          document.getElementById("transaction-category-status").textContent = error.message;
+        }
+      }
+    }
+
+    loadCategories("/api/current_categories", "current-categories-body", "current-categories-status");
+
+  </script>
+</body>
+</html>

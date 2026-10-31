@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chỉnh sửa giao dịch</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 20px; background: #f3f6fa; color: #182638; font: 16px/1.5 system-ui, sans-serif; }
+    main { max-width: 1100px; margin: auto; }
+    a { color: #2459ce; }
+    section { background: white; border: 1px solid #dce3ed; border-radius: 12px; padding: 24px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e5eaf1; }
+    th { background: #f5f7fb; }
+    td { overflow-wrap: anywhere; }
+    .amount { text-align: right; white-space: nowrap; }
+    .income { color: #087b59; }
+    .expense { color: #bc3232; }
+    .muted { color: #526176; }
+    nav { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 24px; }
+    button { font: inherit; padding: 9px 16px; border: 0; border-radius: 6px; background: #2459ce; color: white; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+  </style>
+</head>
+<body>
+  <main>
+    <a href="/">← Về trang chủ</a>
+    <h1>Chỉnh sửa giao dịch</h1>
+    <p class="muted">10 giao dịch mỗi trang, sắp xếp theo ngày mới nhất.</p>
+    <section aria-label="Danh sách giao dịch">
+      <p id="status" class="muted" role="status">Đang tải…</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">ID</th><th scope="col">Ngày</th><th scope="col">Danh mục</th><th scope="col">Loại</th><th scope="col" class="amount">Số tiền</th><th scope="col">Ghi chú</th></tr></thead>
+          <tbody id="transactions-body"></tbody>
+        </table>
+      </div>
+      <nav aria-label="Phân trang giao dịch">
+        <button id="previous" type="button" disabled>Trang trước</button>
+        <span id="page-info" aria-live="polite"></span>
+        <button id="next" type="button" disabled>Trang sau</button>
+      </nav>
+    </section>
+  </main>
+  <script>
+    const money = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" });
+    const dateFormat = new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+    const previous = document.getElementById("previous");
+    const next = document.getElementById("next");
+    let currentPage = 1;
+
+    function formatDate(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : dateFormat.format(date);
+    }
+
+    async function loadTransactions(page) {
+      const status = document.getElementById("status");
+      previous.disabled = true;
+      next.disabled = true;
+      status.textContent = "Đang tải…";
+      try {
+        const response = await fetch(`/api/transactions?page=${page}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Không thể tải giao dịch.");
+        if (page > Math.max(1, data.total_pages)) {
+          return await loadTransactions(Math.max(1, data.total_pages));
+        }
+        const tbody = document.getElementById("transactions-body");
+        tbody.replaceChildren();
+        for (const transaction of data.transactions) {
+          const row = document.createElement("tr");
+          const values = [transaction.id, formatDate(transaction.date),
+            transaction.category_id == null ? "Chưa phân loại" : (transaction.category_name ?? "—"),
+            transaction.coefficient === 1 ? "Thu nhập" : "Chi tiêu",
+            money.format(transaction.amount), transaction.note || "—"];
+          values.forEach((value, index) => {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            if (index === 4) cell.className = `amount ${transaction.coefficient === 1 ? "income" : "expense"}`;
+            row.appendChild(cell);
+          });
+          tbody.appendChild(row);
+        }
+        currentPage = data.page;
+        const url = new URL(window.location.href);
+        url.searchParams.set("page", currentPage);
+        window.history.replaceState(null, "", url);
+        document.getElementById("page-info").textContent = `Trang ${currentPage} / ${Math.max(1, data.total_pages)}`;
+        status.textContent = data.total ? `Tổng cộng ${data.total} giao dịch.` : "Chưa có giao dịch nào.";
+        previous.disabled = currentPage <= 1;
+        next.disabled = currentPage >= data.total_pages;
+      } catch (error) {
+        status.textContent = `${error.message} Vui lòng tải lại trang.`;
+      }
+    }
+    previous.addEventListener("click", () => loadTransactions(currentPage - 1));
+    next.addEventListener("click", () => loadTransactions(currentPage + 1));
+    const initialPage = Number(new URLSearchParams(window.location.search).get("page") || 1);
+    loadTransactions(Number.isSafeInteger(initialPage) && initialPage > 0 ? initialPage : 1);
+  </script>
+</body>
+</html>
