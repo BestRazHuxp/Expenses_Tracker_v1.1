@@ -35,7 +35,7 @@
       <p id="status" role="status">Đang tải…</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th scope="col">ID</th><th scope="col">Tên danh mục</th><th scope="col" class="amount">Hạn mức</th><th scope="col">Trạng thái</th><th scope="col">Thao tác</th></tr></thead>
+          <thead><tr><th scope="col">ID</th><th scope="col">Tên danh mục</th><th scope="col" class="amount">Hạn mức</th><th scope="col">Thao tác</th></tr></thead>
           <tbody id="categories-body"></tbody>
         </table>
       </div>
@@ -71,8 +71,7 @@
         for (const category of categories) {
           const row = document.createElement("tr");
           const values = [category.category_id, category.name ?? "—",
-            category.limit_amount == null ? "—" : amountFormat.format(category.limit_amount),
-            category.is_deleted ? "Đã xóa" : "Đang sử dụng"];
+            category.limit_amount == null ? "—" : amountFormat.format(category.limit_amount)];
           values.forEach((value, index) => {
             const cell = document.createElement("td");
             cell.textContent = value;

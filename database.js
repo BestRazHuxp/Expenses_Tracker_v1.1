@@ -9,15 +9,13 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS categories (
     category_id INTEGER PRIMARY KEY NOT NULL,
     name TEXT,
-    limit_amount REAL,
-    is_deleted BOOL
+    limit_amount REAL
   );
 
   CREATE TABLE IF NOT EXISTS current_categories (
     category_id INTEGER NOT NULL,
     name TEXT,
     limit_amount REAL,
-    is_deleted BOOL,
     date TEXT,
     PRIMARY KEY (category_id, date)
   );
@@ -46,12 +44,11 @@ if (!currentCategoryColumns.some((column) => column.name === "date" && column.pk
         category_id INTEGER NOT NULL,
         name TEXT,
         limit_amount REAL,
-        is_deleted BOOL,
         date TEXT,
         PRIMARY KEY (category_id, date)
       );
-      INSERT INTO current_categories_new (category_id, name, limit_amount, is_deleted, date)
-      SELECT category_id, name, limit_amount, is_deleted, date FROM current_categories;
+      INSERT INTO current_categories_new (category_id, name, limit_amount, date)
+      SELECT category_id, name, limit_amount, date FROM current_categories;
       DROP TABLE current_categories;
       ALTER TABLE current_categories_new RENAME TO current_categories;
       COMMIT;
@@ -60,6 +57,20 @@ if (!currentCategoryColumns.some((column) => column.name === "date" && column.pk
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+db.exec("BEGIN TRANSACTION");
+try {
+  for (const table of ["categories", "current_categories"]) {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (columns.some((column) => column.name === "is_deleted")) {
+      db.exec(`ALTER TABLE ${table} DROP COLUMN is_deleted`);
+    }
+  }
+  db.exec("COMMIT");
+} catch (error) {
+  db.exec("ROLLBACK");
+  throw error;
 }
 
 module.exports = db;

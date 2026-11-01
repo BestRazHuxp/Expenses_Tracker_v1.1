@@ -22,6 +22,9 @@
     nav { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 24px; }
     button { font: inherit; padding: 9px 16px; border: 0; border-radius: 6px; background: #2459ce; color: white; cursor: pointer; }
     button:disabled { opacity: 0.5; cursor: default; }
+    .delete-button { background: #bc3232; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    input, select { font: inherit; padding: 8px; border: 1px solid #bcc8d7; border-radius: 6px; width: 150px; }
   </style>
 </head>
 <body>
@@ -33,7 +36,7 @@
       <p id="status" class="muted" role="status">Đang tải…</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th scope="col">ID</th><th scope="col">Ngày</th><th scope="col">Danh mục</th><th scope="col">Loại</th><th scope="col" class="amount">Số tiền</th><th scope="col">Ghi chú</th></tr></thead>
+          <thead><tr><th scope="col">ID</th><th scope="col">Ngày</th><th scope="col">Danh mục</th><th scope="col">Loại</th><th scope="col" class="amount">Số tiền</th><th scope="col">Ghi chú</th><th scope="col">Thao tác</th></tr></thead>
           <tbody id="transactions-body"></tbody>
         </table>
       </div>
@@ -83,6 +86,139 @@
             if (index === 4) cell.className = `amount ${transaction.coefficient === 1 ? "income" : "expense"}`;
             row.appendChild(cell);
           });
+          const actions = document.createElement("td");
+          const controls = document.createElement("div");
+          controls.className = "actions";
+          const editButton = document.createElement("button");
+          editButton.type = "button";
+          editButton.textContent = "Edit";
+          const saveButton = document.createElement("button");
+          saveButton.type = "button";
+          saveButton.textContent = "Save";
+          saveButton.hidden = true;
+          const cancelButton = document.createElement("button");
+          cancelButton.type = "button";
+          cancelButton.textContent = "Hủy";
+          cancelButton.hidden = true;
+          let fields;
+          const deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "delete-button";
+          deleteButton.textContent = "Delete";
+          function finishEditing() {
+            values.forEach((value, index) => { row.children[index].textContent = value; });
+            editButton.hidden = false;
+            deleteButton.hidden = false;
+            saveButton.hidden = true;
+            cancelButton.hidden = true;
+          }
+
+          editButton.addEventListener("click", async () => {
+            editButton.disabled = true;
+            deleteButton.disabled = true;
+            try {
+              const response = await fetch("/api/categories");
+              const categories = await response.json();
+              if (!response.ok || !Array.isArray(categories)) throw new Error("Không thể tải danh mục.");
+              fields = {};
+              for (const [name, type] of [["date", "date"], ["amount", "number"], ["note", "text"]]) {
+                const input = document.createElement("input");
+                input.type = type;
+                input.name = name;
+                input.setAttribute("aria-label", `${name} giao dịch #${transaction.id}`);
+                input.required = name !== "note";
+                if (name === "amount") input.step = "any";
+                input.value = transaction[name] ?? "";
+                fields[name] = input;
+              }
+              const parsedDate = new Date(transaction.date);
+              if (transaction.date && !Number.isNaN(parsedDate.getTime())) {
+                const parts = new Intl.DateTimeFormat("en-US", {
+                  timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit",
+                }).formatToParts(parsedDate);
+                fields.date.value = ["year", "month", "day"].map(type => parts.find(part => part.type === type).value).join("-");
+              }
+              fields.category_id = document.createElement("select");
+              fields.category_id.setAttribute("aria-label", `Danh mục giao dịch #${transaction.id}`);
+              fields.category_id.add(new Option("Chưa phân loại", "null"));
+              for (const category of categories) fields.category_id.add(new Option(category.name ?? "—", category.category_id));
+              fields.category_id.value = transaction.category_id == null ? "null" : String(transaction.category_id);
+              if (fields.category_id.selectedIndex < 0) fields.category_id.value = "null";
+              fields.coefficient = document.createElement("select");
+              fields.coefficient.setAttribute("aria-label", `Loại giao dịch #${transaction.id}`);
+              fields.coefficient.add(new Option("Chi tiêu", "-1"));
+              fields.coefficient.add(new Option("Thu nhập", "1"));
+              fields.coefficient.value = String(transaction.coefficient);
+              ["date", "category_id", "coefficient", "amount", "note"].forEach((name, index) => {
+                row.children[index + 1].replaceChildren(fields[name]);
+              });
+              editButton.hidden = true;
+              deleteButton.hidden = true;
+              saveButton.hidden = false;
+              cancelButton.hidden = false;
+              fields.date.focus();
+            } catch (error) {
+              window.alert(error.message);
+            } finally {
+              editButton.disabled = false;
+              deleteButton.disabled = false;
+            }
+          });
+          cancelButton.addEventListener("click", finishEditing);
+          saveButton.addEventListener("click", async () => {
+            if (!Object.values(fields).every(field => field.reportValidity())) return;
+            if (!window.confirm(`Bạn có chắc muốn lưu thay đổi giao dịch #${transaction.id}?`)) return;
+            const payload = {
+              id: transaction.id,
+              date: fields.date.value,
+              category_id: fields.category_id.value === "null" ? null : Number(fields.category_id.value),
+              amount: Number(fields.amount.value),
+              note: fields.note.value,
+              coefficient: Number(fields.coefficient.value),
+            };
+            saveButton.disabled = true;
+            cancelButton.disabled = true;
+            Object.values(fields).forEach(field => { field.disabled = true; });
+            try {
+              const response = await fetch("/api/transactions", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || "Không thể cập nhật giao dịch.");
+              await loadTransactions(currentPage);
+            } catch (error) {
+              window.alert(error.message);
+            } finally {
+              saveButton.disabled = false;
+              cancelButton.disabled = false;
+              Object.values(fields).forEach(field => { field.disabled = false; });
+            }
+          });
+          deleteButton.addEventListener("click", async () => {
+            if (!window.confirm(`Bạn có chắc muốn xóa giao dịch #${transaction.id} với số tiền ${money.format(transaction.amount)}?`)) return;
+            deleteButton.disabled = true;
+            editButton.disabled = true;
+            try {
+              const response = await fetch("/api/transactions", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: transaction.id }),
+              });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || "Không thể xóa giao dịch.");
+              await loadTransactions(currentPage);
+            } catch (error) {
+              window.alert(error.message);
+            } finally {
+              deleteButton.disabled = false;
+              editButton.disabled = false;
+            }
+          });
+          controls.append(editButton, saveButton, cancelButton, deleteButton);
+          actions.appendChild(controls);
+          row.appendChild(actions);
           tbody.appendChild(row);
         }
         currentPage = data.page;

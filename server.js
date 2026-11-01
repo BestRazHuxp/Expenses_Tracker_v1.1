@@ -20,8 +20,8 @@ app.use(express.urlencoded({ extended: true }));
     const date = `${year}-${month}-01`;
 
     return db.prepare(`
-        INSERT INTO current_categories (category_id, name, limit_amount, is_deleted, date)
-        SELECT category_id, name, limit_amount, is_deleted, ? FROM categories WHERE 1
+        INSERT INTO current_categories (category_id, name, limit_amount, date)
+        SELECT category_id, name, limit_amount, ? FROM categories WHERE 1
         ON CONFLICT (category_id, date) DO NOTHING
     `).run(date);
     }
@@ -174,8 +174,8 @@ app.post("/api/categories", (req, res) => {
   try {
     db.exec("BEGIN TRANSACTION");
     const result = db.prepare(`
-      INSERT INTO categories (name, limit_amount, is_deleted)
-      VALUES (?, ?, 0)
+      INSERT INTO categories (name, limit_amount)
+      VALUES (?, ?)
     `).run(name, limit_amount);
     const category_id = Number(result.lastInsertRowid);
 
@@ -188,15 +188,14 @@ app.post("/api/categories", (req, res) => {
       .join("-");
 
     db.prepare(`
-      INSERT INTO current_categories (category_id, name, limit_amount, is_deleted, date)
-      VALUES (?, ?, ?, 0, ?)
+      INSERT INTO current_categories (category_id, name, limit_amount, date)
+      VALUES (?, ?, ?, ?)
     `).run(category_id, name, limit_amount, date);
     db.exec("COMMIT");
     return sendPostResult(req, res, 201, {
       category_id,
       name,
       limit_amount,
-      is_deleted: false,
     }, "Thêm danh mục thành công.");
   } catch (error) {
     if (db.isTransaction) db.exec("ROLLBACK");
@@ -291,6 +290,83 @@ app.get("/api/transactions", (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "Could not get transactions" });
+  }
+});
+
+app.patch("/api/transactions", (req, res) => {
+  const { id, date, category_id, amount, coefficient, note } = req.body || {};
+  if (
+    !Number.isSafeInteger(id) ||
+    typeof date !== "string" || date.trim() === "" ||
+    (category_id !== null && !Number.isSafeInteger(category_id)) ||
+    typeof amount !== "number" || !Number.isFinite(amount) ||
+    ![1, -1].includes(coefficient) ||
+    (note != null && typeof note !== "string")
+  ) {
+    return res.status(400).json({ error: "Invalid transaction data" });
+  }
+
+  try {
+    const transactionDay = db.prepare("SELECT date(?, '+7 hours') AS day").get(date).day;
+    if (!transactionDay) {
+      return res.status(400).json({ error: "Invalid transaction date" });
+    }
+    const transactionMonth = transactionDay.slice(0, 7);
+
+    db.exec("BEGIN TRANSACTION");
+    const transaction = db.prepare("SELECT id FROM transactions WHERE id = ?").get(id);
+    if (!transaction) {
+      db.exec("ROLLBACK");
+      return res.status(404).json({ error: "Transaction does not exist" });
+    }
+
+    if (category_id !== null) {
+      const category = db.prepare("SELECT * FROM categories WHERE category_id = ?").get(category_id);
+      if (!category) {
+        db.exec("ROLLBACK");
+        return res.status(400).json({ error: "Category does not exist" });
+      }
+
+      const currentCategory = db.prepare(`
+        SELECT category_id FROM current_categories
+        WHERE category_id = ? AND substr(date, 1, 7) = ?
+      `).get(category_id, transactionMonth);
+      if (!currentCategory) {
+        db.prepare(`
+          INSERT INTO current_categories (category_id, name, limit_amount, date)
+          VALUES (?, ?, ?, ?)
+        `).run(category_id, category.name, category.limit_amount, transactionDay);
+      }
+    }
+
+    db.prepare(`
+      UPDATE transactions SET date = ?, category_id = ?, amount = ?, coefficient = ?, note = ?
+      WHERE id = ?
+    `).run(date, category_id, amount, coefficient, note ?? null, id);
+    db.exec("COMMIT");
+    return res.json({ id, date, category_id, amount, coefficient, note: note ?? null });
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    console.error(error);
+    return res.status(500).json({ error: "Could not update transaction" });
+  }
+});
+
+app.delete("/api/transactions", (req, res) => {
+  const { id } = req.body || {};
+  if (!Number.isSafeInteger(id)) {
+    return res.status(400).json({ error: "id must be an integer" });
+  }
+
+  try {
+    const result = db.prepare("DELETE FROM transactions WHERE id = ?").run(id);
+    if (!result.changes) {
+      return res.status(404).json({ error: "Transaction does not exist" });
+    }
+    return res.json({ id, deleted: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Could not delete transaction" });
   }
 });
 
